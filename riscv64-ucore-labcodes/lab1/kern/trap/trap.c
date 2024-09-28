@@ -114,7 +114,7 @@ void interrupt_handler(struct trapframe *tf) {
             */
             clock_set_next_event();
             ticks++;
-            if(ticks%100 == TICK_NUM){
+            if(ticks%TICK_NUM == 0){
                 print_ticks();
                 num++;
             }
