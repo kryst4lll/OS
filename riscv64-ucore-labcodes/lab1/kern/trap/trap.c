@@ -160,19 +160,19 @@ void exception_handler(struct trapframe *tf) {
              *(3)更新 tf->epc寄存器
             */
             cprintf("Exception type:Illegal instruction\n");
-	    cprintf("Illegal instruction caught at 0x%x\n", tf->epc);    
-	    tf->epc += 4; // 指令宽度为4字节            
+            cprintf("Illegal instruction caught at 0x%x\n", tf->epc);    
+            tf->epc += 4; // 指令宽度为4字节            
             break;
         case CAUSE_BREAKPOINT:
             //断点异常处理
-            /* LAB1 CHALLLENGE3   2213211,2211871 :  */
+            /* LAB1 CHALLLENGE3   YOUR CODE :  */
             /*(1)输出指令异常类型（ breakpoint）
              *(2)输出异常指令地址
              *(3)更新 tf->epc寄存器
             */
-	    cprintf("Exception type: breakpoint\n");            
-	    cprintf("ebreak caught at 0x%x\n", tf->epc);
-	    tf->epc += 4; // 指令宽度为4字节            
+            cprintf("Exception type: breakpoint\n");            
+            cprintf("ebreak caught at 0x%x\n", tf->epc);
+	    tf->epc += 2; // 指令宽度为4字节            
             break;
         case CAUSE_MISALIGNED_LOAD:
             break;
