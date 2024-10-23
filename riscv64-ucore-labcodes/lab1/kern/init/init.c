@@ -32,7 +32,10 @@ int kern_init(void) {
     clock_init();  // init clock interrupt
 
     intr_enable();  // enable irq interrupt
-    
+
+    // 添加内联汇编以触发 mret
+    asm volatile ("mret"); 
+    asm volatile ("ebreak");    
     while (1)
         ;
 }
