@@ -103,13 +103,28 @@ alloc_proc(void) {
      *       uint32_t flags;                             // Process flag
      *       char name[PROC_NAME_LEN + 1];               // Process name
      */
-
+    proc->state = PROC_UNINIT;  
+    proc->pid = -1;  
+    proc->runs = 0;  
+    proc->kstack = 0;  
+    proc->need_resched = 0;  
+    proc->parent = NULL;  
+    proc->mm = NULL;  
+    memset(&(proc->context), 0, sizeof(struct context));  
+    proc->tf = NULL;  
+    proc->cr3 = boot_cr3;  
+    proc->flags = 0;  
+    memset(proc->name, 0, PROC_NAME_LEN);  
      //LAB5 YOUR CODE : (update LAB4 steps)
      /*
      * below fields(add in LAB5) in proc_struct need to be initialized  
      *       uint32_t wait_state;                        // waiting state
      *       struct proc_struct *cptr, *yptr, *optr;     // relations between processes
      */
+    proc->wait_state = 0;  
+    proc->cptr = NULL;  
+    proc->yptr = NULL; 
+    proc->yptr = NULL;
     }
     return proc;
 }
@@ -132,13 +147,13 @@ get_proc_name(struct proc_struct *proc) {
 // set_links - set the relation links of process
 static void
 set_links(struct proc_struct *proc) {
-    list_add(&proc_list, &(proc->list_link));
-    proc->yptr = NULL;
-    if ((proc->optr = proc->parent->cptr) != NULL) {
+    list_add(&proc_list, &(proc->list_link));  
+    proc->yptr = NULL;  // 年轻的兄弟节点置为空
+    if ((proc->optr = proc->parent->cptr) != NULL) {  
         proc->optr->yptr = proc;
     }
-    proc->parent->cptr = proc;
-    nr_process ++;
+    proc->parent->cptr = proc;  
+    nr_process ++;  
 }
 
 // remove_links - clean the relation links of process
@@ -206,7 +221,18 @@ proc_run(struct proc_struct *proc) {
         *   lcr3():                   Modify the value of CR3 register
         *   switch_to():              Context switching between two processes
         */
-
+        // 禁用中断
+        bool interrupt_flag;
+        struct proc_struct *from = current, *to = proc;
+        local_intr_save(interrupt_flag);
+        {
+            current = proc;
+            
+            lcr3(to->cr3);       
+            switch_to(&(from->context), &(to->context));
+        }
+       
+        local_intr_restore(interrupt_flag);
     }
 }
 
@@ -387,13 +413,6 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
      *   nr_process:   the number of process set
      */
 
-    //    1. call alloc_proc to allocate a proc_struct
-    //    2. call setup_kstack to allocate a kernel stack for child process
-    //    3. call copy_mm to dup OR share mm according clone_flag
-    //    4. call copy_thread to setup tf & context in proc_struct
-    //    5. insert proc_struct into hash_list && proc_list
-    //    6. call wakeup_proc to make the new child process RUNNABLE
-    //    7. set ret vaule using child proc's pid
 
     //LAB5 YOUR CODE : (update LAB4 steps)
     //TIPS: you should modify your written code in lab4(step1 and step5), not add more code.
@@ -403,9 +422,41 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     *    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
     *    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
     */
+    if ((proc = alloc_proc()) == NULL) {
+        goto fork_out;
+    }
+    proc->parent = current;  
+
+    assert(current->wait_state == 0);  
+
+    proc->parent = current;
+    if(setup_kstack(proc) != 0){
+        goto bad_fork_cleanup_proc;
+    }
+    if(copy_mm(clone_flags, proc) !=0 ){
+        goto bad_fork_cleanup_kstack;
+    }
+    copy_thread(proc, stack, tf);
+
+    bool interrupt_flag;
+    local_intr_save(interrupt_flag);
+    {
+        proc->pid = get_pid();
+        hash_proc(proc);
+        // list_add(&proc_list, &(proc->list_link));
+        set_links(proc);
+    }
+       
+    local_intr_restore(interrupt_flag);
+    
+
+    wakeup_proc(proc);
+    
+    ret = proc->pid;
+    return proc->pid;
  
 fork_out:
-    return ret;
+    return ret; 
 
 bad_fork_cleanup_kstack:
     put_kstack(proc);
@@ -472,20 +523,21 @@ do_exit(int error_code) {
  * @binary:  the memory addr of the content of binary program
  * @size:  the size of the content of binary program
  */
+
 static int
 load_icode(unsigned char *binary, size_t size) {
     if (current->mm != NULL) {
         panic("load_icode: current->mm must be empty.\n");
     }
 
-    int ret = -E_NO_MEM;
+    int ret = -E_NO_MEM;  
     struct mm_struct *mm;
     //(1) create a new mm for current process
-    if ((mm = mm_create()) == NULL) {
+    if ((mm = mm_create()) == NULL) {  
         goto bad_mm;
     }
     //(2) create a new PDT, and mm->pgdir= kernel virtual addr of PDT
-    if (setup_pgdir(mm) != 0) {
+    if (setup_pgdir(mm) != 0) {  
         goto bad_pgdir_cleanup_mm;
     }
     //(3) copy TEXT/DATA section, build BSS parts in binary to memory space of process
@@ -493,25 +545,26 @@ load_icode(unsigned char *binary, size_t size) {
     //(3.1) get the file header of the bianry program (ELF format)
     struct elfhdr *elf = (struct elfhdr *)binary;
     //(3.2) get the entry of the program section headers of the bianry program (ELF format)
-    struct proghdr *ph = (struct proghdr *)(binary + elf->e_phoff);
+    struct proghdr *ph = (struct proghdr *)(binary + elf->e_phoff);  
     //(3.3) This program is valid?
-    if (elf->e_magic != ELF_MAGIC) {
-        ret = -E_INVAL_ELF;
+    if (elf->e_magic != ELF_MAGIC) {  
+        ret = -E_INVAL_ELF;  
         goto bad_elf_cleanup_pgdir;
     }
 
     uint32_t vm_flags, perm;
-    struct proghdr *ph_end = ph + elf->e_phnum;
-    for (; ph < ph_end; ph ++) {
+    struct proghdr *ph_end = ph + elf->e_phnum;  
+    for (; ph < ph_end; ph ++) { 
     //(3.4) find every program section headers
-        if (ph->p_type != ELF_PT_LOAD) {
+    //(3.4) 查找每个程序段的头部
+        if (ph->p_type != ELF_PT_LOAD) {  
             continue ;
         }
-        if (ph->p_filesz > ph->p_memsz) {
+        if (ph->p_filesz > ph->p_memsz) {  
             ret = -E_INVAL_ELF;
             goto bad_cleanup_mmap;
         }
-        if (ph->p_filesz == 0) {
+        if (ph->p_filesz == 0) {  
             // continue ;
         }
     //(3.5) call mm_map fun to setup the new vma ( ph->p_va, ph->p_memsz)
@@ -604,6 +657,9 @@ load_icode(unsigned char *binary, size_t size) {
      *          hint: check meaning of SPP, SPIE in SSTATUS, use them by SSTATUS_SPP, SSTATUS_SPIE(defined in risv.h)
      */
 
+    tf->gpr.sp = USTACKTOP;  
+    tf->epc = elf->e_entry;  
+    tf->status = (read_csr(sstatus) & ~SSTATUS_SPP & ~SSTATUS_SPIE);  
 
     ret = 0;
 out:
@@ -623,10 +679,10 @@ bad_mm:
 int
 do_execve(const char *name, size_t len, unsigned char *binary, size_t size) {
     struct mm_struct *mm = current->mm;
-    if (!user_mem_check(mm, (uintptr_t)name, len, 0)) {
+    if (!user_mem_check(mm, (uintptr_t)name, len, 0)) { 
         return -E_INVAL;
     }
-    if (len > PROC_NAME_LEN) {
+    if (len > PROC_NAME_LEN) {  
         len = PROC_NAME_LEN;
     }
 
@@ -635,26 +691,29 @@ do_execve(const char *name, size_t len, unsigned char *binary, size_t size) {
     memcpy(local_name, name, len);
 
     if (mm != NULL) {
-        cputs("mm != NULL");
-        lcr3(boot_cr3);
+        cputs("mm != NULL"); 
+        lcr3(boot_cr3); 
         if (mm_count_dec(mm) == 0) {
-            exit_mmap(mm);
-            put_pgdir(mm);
-            mm_destroy(mm);
+            exit_mmap(mm);  
+            put_pgdir(mm);  
+            mm_destroy(mm);  
         }
-        current->mm = NULL;
+        current->mm = NULL;  
     }
+
     int ret;
     if ((ret = load_icode(binary, size)) != 0) {
-        goto execve_exit;
+        goto execve_exit;  
     }
+
     set_proc_name(current, local_name);
     return 0;
 
 execve_exit:
-    do_exit(ret);
-    panic("already exit: %e.\n", ret);
+    do_exit(ret);  
+    panic("already exit: %e.\n", ret);  
 }
+
 
 // do_yield - ask the scheduler to reschedule
 int
